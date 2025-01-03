@@ -52,23 +52,42 @@ local function open_workspace_popup(workspace, options)
 		return
 	end
 
-	local workspace_path = vim.fn.expand(workspace.path) -- Expand the ~ symbol
-	local folders = vim.fn.globpath(workspace_path, "*", 1, 1)
+	if not workspace.path or workspace.path == "" then
+		vim.api.nvim_err_writeln("Invalid workspace path")
+		return
+	end
 
+	local workspace_path = vim.fn.expand(workspace.path) -- Expand the ~ symbol
+	local all_git_folders = vim.fn.globpath(workspace_path, "**/.git", 1, 1) -- Find all .git folders
+	local git_projects = {}
+
+	for _, git_path in ipairs(all_git_folders) do
+		local parent_dir = vim.fn.fnamemodify(git_path, ":h") -- Parent directory of .git
+		git_projects[parent_dir] = true -- Use table to remove duplicates
+	end
+
+	local unique_folders = vim.tbl_keys(git_projects) -- Convert to list
 	local entries = {}
 
-	table.insert(entries, {
-		value = "newProject",
-		display = "Create new project",
-		ordinal = "Create new project",
-	})
-
-	for _, folder in ipairs(folders) do
+	if #unique_folders == 0 then
 		table.insert(entries, {
-			value = folder,
-			display = workspace.path .. "/" .. folder:match("./([^/]+)$"),
-			ordinal = folder,
+			value = "noProjects",
+			display = "No Git projects found",
+			ordinal = "No Git projects found",
 		})
+	else
+		table.insert(entries, {
+			value = "newProject",
+			display = "Create new project",
+			ordinal = "Create new project",
+		})
+		for _, folder in ipairs(unique_folders) do
+			table.insert(entries, {
+				value = folder,
+				display = folder:gsub(workspace_path .. "/", ""),
+				ordinal = folder,
+			})
+		end
 	end
 
 	pickers
@@ -91,7 +110,13 @@ local function open_workspace_popup(workspace, options)
 				action_set.select:replace(function(prompt_bufnr)
 					local selection = action_state.get_selected_entry(prompt_bufnr)
 					actions.close(prompt_bufnr)
-					tmux.manage_session(selection.value, workspace, options)
+					if selection.value == "noProjects" then
+						vim.api.nvim_err_writeln("No Git projects to manage")
+					elseif selection.value == "newProject" then
+						-- Handle new project creation
+					else
+						tmux.manage_session(selection.value, workspace, options)
+					end
 				end)
 				return true
 			end,
