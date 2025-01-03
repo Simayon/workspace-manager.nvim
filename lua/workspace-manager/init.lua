@@ -47,76 +47,67 @@ local default_options = {
 }
 
 local function open_workspace_popup(workspace, options)
-	if not tmux.is_running() then
-		vim.api.nvim_err_writeln("Tmux is not running or not in a tmux session")
+	local workspace_path = vim.fn.expand("$PROJECTS_DIR") -- Assuming $PROJECTS_DIR is set
+	if workspace_path == "" or not vim.fn.isdirectory(workspace_path) then
+		vim.api.nvim_err_writeln("Error: Projects directory not found or not set")
 		return
 	end
 
-	if not workspace.path or workspace.path == "" then
-		vim.api.nvim_err_writeln("Invalid workspace path")
+	-- Search for all `.git` directories
+	local git_dirs = vim.fn.globpath(workspace_path, "**/.git", true, true)
+	if #git_dirs == 0 then
+		vim.api.nvim_out_write("No Git repositories found in the projects directory\n")
 		return
 	end
 
-	local workspace_path = vim.fn.expand(workspace.path) -- Expand the ~ symbol
-	local all_git_folders = vim.fn.globpath(workspace_path, "**/.git", 1, 1) -- Find all .git folders
-	local git_projects = {}
-
-	for _, git_path in ipairs(all_git_folders) do
-		local parent_dir = vim.fn.fnamemodify(git_path, ":h") -- Parent directory of .git
-		git_projects[parent_dir] = true -- Use table to remove duplicates
+	-- Extract parent directories of `.git` folders
+	local repos = {}
+	for _, git_dir in ipairs(git_dirs) do
+		local repo_path = vim.fn.fnamemodify(git_dir, ":h") -- Parent directory
+		table.insert(repos, repo_path)
 	end
 
-	local unique_folders = vim.tbl_keys(git_projects) -- Convert to list
-	local entries = {}
-
-	if #unique_folders == 0 then
-		table.insert(entries, {
-			value = "noProjects",
-			display = "No Git projects found",
-			ordinal = "No Git projects found",
-		})
-	else
-		table.insert(entries, {
-			value = "newProject",
-			display = "Create new project",
-			ordinal = "Create new project",
-		})
-		for _, folder in ipairs(unique_folders) do
-			table.insert(entries, {
-				value = folder,
-				display = folder:gsub(workspace_path .. "/", ""),
-				ordinal = folder,
-			})
-		end
+	-- Remove duplicates
+	local unique_repos = {}
+	for _, repo in ipairs(repos) do
+		unique_repos[repo] = true
 	end
+	repos = vim.tbl_keys(unique_repos)
+
+	-- Create Telescope picker
+	local pickers = require("telescope.pickers")
+	local finders = require("telescope.finders")
+	local sorters = require("telescope.sorters")
+	local previewers = require("telescope.previewers")
+	local actions = require("telescope.actions")
+	local action_state = require("telescope.actions.state")
 
 	pickers
-		.new({
-			results_title = workspace.name,
-			prompt_title = "Search in " .. workspace.name .. " workspace",
-		}, {
+		.new({}, {
+			prompt_title = "Select Git Repository",
 			finder = finders.new_table({
-				results = entries,
-				entry_maker = function(entry)
+				results = repos,
+				entry_maker = function(repo)
 					return {
-						value = entry.value,
-						display = entry.display,
-						ordinal = entry.ordinal,
+						value = repo,
+						display = repo:gsub(workspace_path .. "/", ""), -- Display relative path
+						ordinal = repo,
 					}
 				end,
 			}),
 			sorter = sorters.get_fuzzy_file(),
-			attach_mappings = function()
-				action_set.select:replace(function(prompt_bufnr)
+			previewer = previewers.new_termopen_previewer({
+				get_command = function(entry)
+					-- Use `onefetch` to preview repository details
+					return { "onefetch", entry.value }
+				end,
+			}),
+			attach_mappings = function(_, map)
+				actions.select_default:replace(function(prompt_bufnr)
 					local selection = action_state.get_selected_entry(prompt_bufnr)
 					actions.close(prompt_bufnr)
-					if selection.value == "noProjects" then
-						vim.api.nvim_err_writeln("No Git projects to manage")
-					elseif selection.value == "newProject" then
-						-- Handle new project creation
-					else
-						tmux.manage_session(selection.value, workspace, options)
-					end
+					print("Selected repository: " .. selection.value)
+					-- Add your custom action here, e.g., open a tmux session or cd into the directory
 				end)
 				return true
 			end,
