@@ -149,7 +149,7 @@ function M.tmux_sessions()
 		:find()
 end
 
----@mod workspace.setup setup
+---@mod workspace-manager.setup setup
 ---@param options table Setup options
 --- * {workspaces} (table) List of workspaces
 ---  ```
